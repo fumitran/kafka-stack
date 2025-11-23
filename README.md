@@ -105,7 +105,7 @@ docker-compose down -v
 ### Cài đặt dependencies
 
 ```bash
-cd kafka-pytho-demo
+cd kafka-python-demo
 python3 -m venv venv
 source venv/bin/activate  # Trên Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -149,7 +149,7 @@ kafka-stack/
 ├── prometheus.yml              # Cấu hình Prometheus
 ├── .gitignore                  # Git ignore file
 ├── README.md                   # File này
-└── kafka-pytho-demo/
+└── kafka-python-demo/
     ├── producer.py             # Python producer example
     ├── consumer.py             # Python consumer example
     ├── requirements.txt        # Python dependencies
