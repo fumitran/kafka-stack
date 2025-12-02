@@ -22,25 +22,9 @@ def main():
     """Hàm main với các ví dụ sử dụng"""
     
     # Khởi tạo config
-    # Cách 1: Dùng SESSION cookie (copy từ trình duyệt Kafka UI)
-    # config = KafkaUIConfig(
-    #     base_url="http://localhost:8080",
-    #     session_token="your_session_value_here",
-    # )
-
-    # Cách 2: Dùng biến môi trường
-    # export KAFKA_UI_SESSION=your_session_value_here
-    # config = KafkaUIConfig(base_url="http://localhost:8080")
-
-    # Cách 3: Dùng Basic Auth (nếu Kafka UI bật basic auth)
-    # config = KafkaUIConfig(
-    #     base_url="http://localhost:8080",
-    #     username="your_username",
-    #     password="your_password"
-    # )
-
-    # Mặc định: dùng giá trị trong config.py (username/password hoặc SESSION từ env)
-    config = KafkaUIConfig(base_url="http://localhost:8080")
+    # Tất cả thông số (base_url, username/password, SESSION...) được cấu hình trong file config.py
+    # hoặc qua biến môi trường (KAFKA_UI_BASE_URL, KAFKA_UI_USERNAME, KAFKA_UI_PASSWORD, KAFKA_UI_SESSION,...)
+    config = KafkaUIConfig()
     client = KafkaUIClient(config)
     
     try:
