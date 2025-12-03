@@ -5,9 +5,14 @@ import requests
 from typing import Dict, List, Optional, Any
 import sys
 import os
+import logging
+import json
+
 # Add src directory to path to import config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import KafkaUIConfig
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaUIClient:
@@ -52,6 +57,15 @@ class KafkaUIClient:
         url = f"{self.base_url}{endpoint}"
         headers = dict(self.default_headers or {})
         
+        # Log request info
+        if params:
+            params_str = "&".join([f"{k}={v}" for k, v in params.items()])
+            logger.info(f"🌐 API Request: {method} {url}?{params_str}")
+        else:
+            logger.info(f"🌐 API Request: {method} {url}")
+        if json_data:
+            logger.debug(f"   Request body: {json_data}")
+        
         try:
             response = requests.request(
                 method=method,
@@ -63,13 +77,46 @@ class KafkaUIClient:
                 timeout=self.timeout
             )
             response.raise_for_status()
-            return response.json()
+
+            # Thử parse JSON; nếu body không phải JSON (ví dụ HTML / empty, text/event-stream)
+            # thì cho phép caller tự handle (đặc biệt với /messages).
+            try:
+                result = response.json()
+            except ValueError:
+                body_preview = (response.text or "").strip()
+                content_type = response.headers.get('Content-Type') or ''
+                logger.error(
+                    "   ❌ Không parse được JSON từ response "
+                    f"(status={response.status_code}, content_type={content_type}). "
+                    f"Body (preview 500 chars): {body_preview[:500]!r}"
+                )
+                # Nếu là endpoint /messages hoặc content-type text/event-stream
+                # thì trả về raw text để hàm get_topic_messages tự parse SSE.
+                if endpoint.endswith("/messages") or "/messages" in endpoint or "text/event-stream" in content_type:
+                    return response.text or ""
+                # Ngược lại trả về dict rỗng
+                return {}
+            
+            # Log response info
+            if isinstance(result, list):
+                logger.info(f"   ✅ Response: {len(result)} item(s)")
+            elif isinstance(result, dict):
+                logger.info(
+                    "   ✅ Response: dict with keys: "
+                    f"{list(result.keys())[:5]}{'...' if len(result.keys()) > 5 else ''}"
+                )
+            else:
+                logger.info(f"   ✅ Response: {type(result).__name__}")
+            
+            return result
         except requests.exceptions.HTTPError as e:
-            print(f"HTTP Error: {e}")
-            print(f"Response: {e.response.text if e.response else 'No response'}")
+            logger.error(
+                f"HTTP Error: {e} | body={e.response.text if e.response else 'No response'}",
+                exc_info=True,
+            )
             raise
         except requests.exceptions.RequestException as e:
-            print(f"Request Error: {e}")
+            logger.error(f"Request Error: {e}", exc_info=True)
             raise
     
     # ========== Cluster Information ==========
@@ -102,6 +149,7 @@ class KafkaUIClient:
             cluster_name: Tên cluster
         """
         cluster = cluster_name or self.cluster_name
+        logger.info(f"📋 Đang lấy danh sách topics từ cluster '{cluster}'...")
         all_topics = []
         
         # Lấy page đầu tiên để kiểm tra pagination
@@ -112,9 +160,11 @@ class KafkaUIClient:
             page_count = response.get('pageCount', 1)
             topics = response.get('topics', [])
             all_topics.extend(topics)
+            logger.info(f"   📄 Page 1/{page_count}: {len(topics)} topic(s)")
             
             # Nếu có nhiều hơn 1 page, quét tất cả các pages còn lại
             if page_count > 1:
+                logger.info(f"   📄 Đang lấy thêm {page_count - 1} page(s)...")
                 for page in range(2, page_count + 1):
                     try:
                         page_response = self._make_request(
@@ -123,18 +173,23 @@ class KafkaUIClient:
                             params={'page': page}
                         )
                         if isinstance(page_response, dict) and 'topics' in page_response:
-                            all_topics.extend(page_response.get('topics', []))
+                            page_topics = page_response.get('topics', [])
+                            all_topics.extend(page_topics)
+                            logger.info(f"   📄 Page {page}/{page_count}: {len(page_topics)} topic(s)")
                     except Exception as e:
                         # Log warning nhưng tiếp tục với các pages khác
-                        print(f"Warning: Không thể lấy page {page}: {e}")
+                        logger.warning(f"   ⚠️  Không thể lấy page {page}: {e}")
                         continue
             
+            logger.info(f"   ✅ Tổng cộng: {len(all_topics)} topic(s)")
             return all_topics
         
         # Nếu là list trực tiếp thì trả về luôn
         if isinstance(response, list):
+            logger.info(f"   ✅ Tổng cộng: {len(response)} topic(s)")
             return response
         
+        logger.warning(f"   ⚠️  Response không đúng định dạng, trả về danh sách rỗng")
         return []
     
     def get_topic_details(
@@ -158,7 +213,7 @@ class KafkaUIClient:
         cluster_name: Optional[str] = None,
         partition: Optional[int] = None,
         limit: int = 100,
-        seek_type: str = 'BEGINNING',
+        seek_type: Optional[str] = None,
         offset: Optional[int] = None
     ) -> List[Dict]:
         """
@@ -169,14 +224,19 @@ class KafkaUIClient:
             cluster_name: Tên cluster
             partition: Partition number (None = tất cả partitions)
             limit: Số lượng messages tối đa
-            seek_type: BEGINNING, END, OFFSET, TIMESTAMP
+            seek_type: BEGINNING, END, OFFSET, TIMESTAMP (None = không thêm seekType vào request)
             offset: Offset để bắt đầu (nếu seek_type = OFFSET)
         """
         cluster = cluster_name or self.cluster_name
+        logger.info(f"📨 Đang lấy messages từ topic '{topic_name}' (cluster: '{cluster}', limit: {limit})...")
+        
         params = {
-            'limit': limit,
-            'seekType': seek_type
+            'limit': limit
         }
+        
+        # Chỉ thêm seekType vào params nếu được chỉ định
+        if seek_type is not None:
+            params['seekType'] = seek_type
         
         if partition is not None:
             params['partition'] = partition
@@ -189,6 +249,11 @@ class KafkaUIClient:
             params=params
         )
 
+        # Nếu nhận về raw text (text/event-stream), parse SSE để lấy messages
+        if isinstance(response, str):
+            logger.info("   🧵 Parsing text/event-stream response cho messages...")
+            return self._parse_sse_messages_body(response)
+
         # Tùy version Kafka UI, API có thể trả về list trực tiếp
         if isinstance(response, list):
             return response
@@ -196,6 +261,71 @@ class KafkaUIClient:
         if isinstance(response, dict) and 'messages' in response:
             data = response['messages']
             return data if isinstance(data, list) else []
+        return []
+
+    def _parse_sse_messages_body(self, body: str) -> List[Dict]:
+        """
+        Parse nội dung text/event-stream từ Kafka UI /messages thành list messages.
+        
+        - Mỗi dòng sự kiện có dạng: 'data:{...json...}'
+        - Một số event có thể chứa field 'messages' (list), hoặc 'message' đơn lẻ.
+        - Nếu không tìm thấy messages rõ ràng, sẽ trả về list các event (dict) thô.
+        """
+        events: List[Dict[str, Any]] = []
+        messages: List[Dict[str, Any]] = []
+
+        for raw_line in body.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith(":"):
+                # Bỏ qua dòng comment / keep-alive
+                continue
+            if not line.startswith("data:"):
+                continue
+
+            data_str = line[len("data:"):].strip()
+            if not data_str:
+                continue
+
+            try:
+                evt = json.loads(data_str)
+                if isinstance(evt, dict):
+                    events.append(evt)
+            except Exception as e:
+                logger.debug(f"   ⚠️  Không parse được dòng SSE: {data_str!r} ({e})")
+                continue
+
+        # Ưu tiên field 'messages' (list) trong event
+        for evt in events:
+            if not isinstance(evt, dict):
+                continue
+
+            # Một số version có thể có field 'messages'
+            if 'messages' in evt and isinstance(evt['messages'], list):
+                for m in evt['messages']:
+                    if isinstance(m, dict):
+                        messages.append(m)
+                    else:
+                        messages.append({'value': m})
+                continue
+
+            # Hoặc field 'message' đơn lẻ
+            if 'message' in evt:
+                m = evt['message']
+                if isinstance(m, dict):
+                    messages.append(m)
+                else:
+                    messages.append({'value': m})
+
+        if messages:
+            logger.info(f"   ✅ Parsed {len(messages)} message(s) từ SSE")
+            return messages
+
+        # Nếu không trích được messages, trả về toàn bộ events để caller có thêm thông tin
+        if events:
+            logger.info(f"   ⚠️  Không tìm thấy field 'messages', trả về {len(events)} event(s) thô")
+            return events
+
+        logger.info("   ⚠️  Không parse được bất kỳ event nào từ SSE, trả về list rỗng")
         return []
     
     def get_topic_config(
