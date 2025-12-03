@@ -63,41 +63,41 @@ def normalize_row(data: Dict[str, Any], fieldnames: List[str]) -> Dict[str, str]
     return row
 
 
-def get_topic_message_count(client: KafkaUIClient, topic_name: str, cluster_name: str) -> Optional[int]:
+def get_topic_message_count_from_data(topic_data: Dict[str, Any]) -> Optional[int]:
     """
-    Lấy tổng số messages của một topic tại thời điểm hiện tại.
+    Lấy tổng số messages của một topic từ dữ liệu topic đã có (không cần gọi API thêm).
     
     Cách lấy:
-    1. Gọi get_topic_details() để lấy thông tin chi tiết topic
-    2. Trong response có field 'partitions' - danh sách các partitions
-    3. Mỗi partition có 'leader' với 'offset' - đây là high watermark (offset cuối cùng + 1)
-    4. Tổng số messages = tổng offset của tất cả partitions
+    1. Response từ get_topics() đã có field 'partitions' - danh sách các partitions
+    2. Mỗi partition có 'offsetMax' - đây là high watermark (offset cuối cùng + 1)
+    3. Tổng số messages = tổng offsetMax của tất cả partitions
     
-    Lưu ý: Offset trong Kafka là exclusive (0-based), nên offset=100 nghĩa là có 100 messages (0-99)
+    Lưu ý: 
+    - offsetMax trong Kafka là exclusive (0-based), nên offsetMax=100 nghĩa là có 100 messages (0-99)
+    - offsetMax - offsetMin = số messages hiện tại trong partition (nếu có log compaction)
     
     Args:
-        client: KafkaUIClient instance
-        topic_name: Tên topic
-        cluster_name: Tên cluster
+        topic_data: Dict chứa thông tin topic từ get_topics() response
         
     Returns:
         Tổng số messages hoặc None nếu không lấy được
     """
     try:
-        topic_details = client.get_topic_details(topic_name, cluster_name)
-        partitions = topic_details.get('partitions', [])
+        partitions = topic_data.get('partitions', [])
+        
+        if not partitions:
+            return None
         
         total_messages = 0
         for partition in partitions:
-            leader = partition.get('leader')
-            if leader and isinstance(leader, dict):
-                # Offset cuối cùng (high watermark) = số lượng messages trong partition này
-                offset = leader.get('offset', 0)
-                if isinstance(offset, (int, float)):
-                    total_messages += int(offset)
+            # offsetMax là high watermark - số lượng messages trong partition này
+            offset_max = partition.get('offsetMax')
+            if offset_max is not None and isinstance(offset_max, (int, float)):
+                total_messages += int(offset_max)
         
         return total_messages if total_messages > 0 else None
     except Exception as e:
+        topic_name = topic_data.get('name', 'unknown')
         logger.warning(f"Không thể lấy số lượng messages cho topic '{topic_name}': {e}")
         return None
 
@@ -164,19 +164,18 @@ def export_topics_for_cluster(
         
         logger.info(f"✅ Lấy được {len(topics)} topics từ cluster '{cluster_name}'.")
         
-        # Thêm thông tin số lượng messages vào mỗi topic
-        logger.info("📊 Đang lấy số lượng messages cho từng topic...")
+        # Thêm thông tin số lượng messages vào mỗi topic (từ dữ liệu đã có, không cần gọi API thêm)
+        logger.info("📊 Đang tính số lượng messages cho từng topic từ dữ liệu đã có...")
         for i, topic in enumerate(topics, 1):
             topic_name = topic.get('name')
             if topic_name:
-                logger.info(f"  [{i}/{len(topics)}] Đang xử lý topic: {topic_name}")
-                message_count = get_topic_message_count(client, topic_name, cluster_name)
+                message_count = get_topic_message_count_from_data(topic)
                 if message_count is not None:
                     topic['totalMessages'] = message_count
-                    logger.info(f"    → Topic '{topic_name}' có {message_count:,} messages")
+                    logger.info(f"  [{i}/{len(topics)}] Topic '{topic_name}': {message_count:,} messages")
                 else:
                     topic['totalMessages'] = None
-                    logger.warning(f"    → Không thể lấy số lượng messages cho topic '{topic_name}'")
+                    logger.warning(f"  [{i}/{len(topics)}] Topic '{topic_name}': Không thể tính số lượng messages")
         
         safe_cluster_name = sanitize_name_for_filename(cluster_name)
         output_file = os.path.join(export_dir, f"topic_{safe_cluster_name}_info.csv")
