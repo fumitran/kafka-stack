@@ -5,6 +5,7 @@ Liệt kê toàn bộ thông tin các topic trong một cluster và ghi ra file 
 import csv
 import json
 import os
+import re
 from typing import Any, Dict, List
 
 from kafka_ui_client import KafkaUIClient
@@ -17,6 +18,15 @@ def ensure_export_dir() -> str:
     export_dir = os.path.join(base_dir, "export")
     os.makedirs(export_dir, exist_ok=True)
     return export_dir
+
+
+def sanitize_name_for_filename(name: str) -> str:
+    """Chuẩn hóa tên để dùng trong tên file: chỉ giữ [A-Za-z0-9_.-], còn lại thay bằng '_'."""
+    if not name:
+        return "default"
+    # Thay mọi chuỗi ký tự không hợp lệ bằng dấu gạch dưới
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip())
+    return safe or "default"
 
 
 def normalize_row(data: Dict[str, Any], fieldnames: List[str]) -> Dict[str, str]:
@@ -89,7 +99,7 @@ def main():
         print(f"Lấy được {len(topics)} topics.")
 
         export_dir = ensure_export_dir()
-        safe_cluster_name = cluster_name.replace(" ", "_")
+        safe_cluster_name = sanitize_name_for_filename(cluster_name)
         output_file = os.path.join(export_dir, f"topic_{safe_cluster_name}_info.csv")
         export_topics_to_csv(topics, output_file)
     except Exception as e:
