@@ -141,83 +141,80 @@ def get_consumers_for_topic(
                         if offset_topic == topic_name:
                             topic_offsets.append(offset_info)
                 
-                # Nếu không có offsets cụ thể, tạo một record tổng hợp
-                if not topic_offsets:
-                    # Tạo consumer record tổng hợp
-                    consumer_record = {
-                        'topicName': topic_name,
-                        'consumerGroupId': consumer_group_id,
-                    }
-                    
-                    if isinstance(group_details, dict):
-                        consumer_record.update({
-                            'consumerGroupState': group_details.get('state') or consumer_group.get('state'),
-                            'consumerGroupProtocol': group_details.get('protocolType') or group_details.get('protocol'),
-                            'memberCount': len(group_details.get('members', [])) if isinstance(group_details.get('members'), list) else 0,
-                        })
-                        
-                        members = group_details.get('members', [])
-                        if members:
-                            consumer_record['members'] = members
-                        
-                        for key in ['partitionAssignor', 'state', 'coordinator']:
-                            if key in group_details and key not in consumer_record:
-                                consumer_record[key] = group_details[key]
-                    else:
-                        consumer_record.update({
-                            'consumerGroupState': consumer_group.get('state'),
-                            'memberCount': 0,
-                        })
-                    
-                    consumer_record.update({
-                        'simpleConsumerGroup': consumer_group.get('simpleConsumerGroup'),
-                        'coordinator': consumer_record.get('coordinator') or consumer_group.get('coordinator'),
-                        'partition': '',
-                        'currentOffset': '',
-                        'endOffset': '',
-                        'lag': '',
-                        'metadata': '',
-                    })
-                    
-                    consumers.append(consumer_record)
-                else:
-                    # Tạo consumer record cho mỗi partition
+                # Lấy thông tin members từ partitions trong group_details
+                # Nếu không có offsets từ API, thử lấy từ partitions trong group_details
+                if not topic_offsets and isinstance(group_details, dict) and 'partitions' in group_details:
+                    partitions = group_details.get('partitions', [])
+                    for partition_info in partitions:
+                        if isinstance(partition_info, dict):
+                            partition_topic = partition_info.get('topic')
+                            if partition_topic == topic_name:
+                                topic_offsets.append(partition_info)
+                
+                # Extract thông tin members từ partitions (chỉ lấy của topic này)
+                # Tạo set để check trùng dựa trên (topic_name, consumer_group_id, consumer_id, host)
+                seen_combinations = set()
+                
+                # Lấy thông tin từ partitions của topic này
+                if isinstance(group_details, dict) and 'partitions' in group_details:
+                    partitions = group_details.get('partitions', [])
+                    for partition_info in partitions:
+                        if isinstance(partition_info, dict):
+                            partition_topic = partition_info.get('topic')
+                            if partition_topic == topic_name:
+                                consumer_id = partition_info.get('consumerId')
+                                host = partition_info.get('host')
+                                
+                                # Tạo key để check trùng
+                                if consumer_id:
+                                    combination_key = (topic_name, consumer_group_id, consumer_id, host or '')
+                                    
+                                    # Chỉ thêm nếu chưa có
+                                    if combination_key not in seen_combinations:
+                                        seen_combinations.add(combination_key)
+                                        
+                                        # Tạo record với 4 trường cần thiết
+                                        consumer_record = {
+                                            'topicName': topic_name,
+                                            'consumerGroupId': consumer_group_id,
+                                            'consumerClientId': consumer_id or '',
+                                            'consumerClientHost': host or '',
+                                        }
+                                        consumers.append(consumer_record)
+                
+                # Nếu không có partitions hoặc không tìm thấy consumer info trong partitions
+                # Thử lấy từ topic_offsets
+                if not consumers and topic_offsets:
                     for offset_info in topic_offsets:
+                        if isinstance(offset_info, dict):
+                            consumer_id = offset_info.get('consumerId')
+                            host = offset_info.get('host')
+                            
+                            if consumer_id:
+                                combination_key = (topic_name, consumer_group_id, consumer_id, host or '')
+                                
+                                if combination_key not in seen_combinations:
+                                    seen_combinations.add(combination_key)
+                                    
+                                    consumer_record = {
+                                        'topicName': topic_name,
+                                        'consumerGroupId': consumer_group_id,
+                                        'consumerClientId': consumer_id or '',
+                                        'consumerClientHost': host or '',
+                                    }
+                                    consumers.append(consumer_record)
+                
+                # Nếu vẫn không có consumer info, tạo record với consumer info rỗng
+                if not consumers:
+                    combination_key = (topic_name, consumer_group_id, '', '')
+                    if combination_key not in seen_combinations:
+                        seen_combinations.add(combination_key)
                         consumer_record = {
                             'topicName': topic_name,
                             'consumerGroupId': consumer_group_id,
+                            'consumerClientId': '',
+                            'consumerClientHost': '',
                         }
-                        
-                        if isinstance(group_details, dict):
-                            consumer_record.update({
-                                'consumerGroupState': group_details.get('state') or consumer_group.get('state'),
-                                'consumerGroupProtocol': group_details.get('protocolType') or group_details.get('protocol'),
-                                'memberCount': len(group_details.get('members', [])) if isinstance(group_details.get('members'), list) else 0,
-                            })
-                            
-                            members = group_details.get('members', [])
-                            if members:
-                                consumer_record['members'] = members
-                            
-                            for key in ['partitionAssignor', 'state', 'coordinator']:
-                                if key in group_details and key not in consumer_record:
-                                    consumer_record[key] = group_details[key]
-                        else:
-                            consumer_record.update({
-                                'consumerGroupState': consumer_group.get('state'),
-                                'memberCount': 0,
-                            })
-                        
-                        consumer_record.update({
-                            'simpleConsumerGroup': consumer_group.get('simpleConsumerGroup'),
-                            'coordinator': consumer_record.get('coordinator') or consumer_group.get('coordinator'),
-                            'partition': offset_info.get('partition'),
-                            'currentOffset': offset_info.get('offset') or offset_info.get('currentOffset'),
-                            'endOffset': offset_info.get('endOffset') or offset_info.get('highWatermark'),
-                            'lag': offset_info.get('lag'),
-                            'metadata': offset_info.get('metadata'),
-                        })
-                        
                         consumers.append(consumer_record)
                 
             except Exception as e:
@@ -278,43 +275,68 @@ def get_all_consumers_for_cluster(
     return topic_consumers_map
 
 
+def remove_duplicate_consumers(consumers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Loại bỏ các consumer records trùng lặp dựa trên 4 trường:
+    topicName, consumerGroupId, consumerClientId, consumerClientHost
+    
+    Args:
+        consumers: Danh sách consumer records
+        
+    Returns:
+        Danh sách consumer records đã loại bỏ trùng lặp
+    """
+    seen = set()
+    unique_consumers = []
+    
+    for consumer in consumers:
+        topic_name = consumer.get('topicName', '')
+        consumer_group_id = consumer.get('consumerGroupId', '')
+        consumer_client_id = consumer.get('consumerClientId', '')
+        consumer_client_host = consumer.get('consumerClientHost', '')
+        
+        # Tạo key để check trùng
+        key = (topic_name, consumer_group_id, consumer_client_id, consumer_client_host)
+        
+        if key not in seen:
+            seen.add(key)
+            unique_consumers.append(consumer)
+    
+    return unique_consumers
+
+
 def export_consumers_to_csv(consumers: List[Dict[str, Any]], file_path: str) -> None:
-    """Ghi danh sách consumers ra file CSV."""
+    """Ghi danh sách consumers ra file CSV với chỉ 4 cột."""
     if not consumers:
         logger.warning("Không có consumer nào để export.")
         return
 
-    # Lấy tập hợp tất cả key xuất hiện trong các consumer (đảm bảo đủ cột)
-    fieldnames_set = set()
-    for c in consumers:
-        fieldnames_set.update(c.keys())
+    # Loại bỏ trùng lặp
+    unique_consumers = remove_duplicate_consumers(consumers)
+    logger.info(f"  Đã loại bỏ {len(consumers) - len(unique_consumers)} record(s) trùng lặp.")
 
-    # Sắp xếp cột, ưu tiên một số cột hay dùng lên đầu
-    preferred_order = [
+    # Chỉ export 4 cột theo yêu cầu
+    fieldnames = [
         "topicName",
         "consumerGroupId",
-        "consumerGroupState",
-        "partition",
-        "currentOffset",
-        "endOffset",
-        "lag",
-        "memberCount",
-        "consumerGroupProtocol",
-        "simpleConsumerGroup",
-        "coordinator",
-        "members",
-        "metadata",
+        "consumerClientId",
+        "consumerClientHost",
     ]
-    remaining = [f for f in sorted(fieldnames_set) if f not in preferred_order]
-    fieldnames = [f for f in preferred_order if f in fieldnames_set] + remaining
 
     with open(file_path, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for c in consumers:
-            writer.writerow(normalize_row(c, fieldnames))
+        for c in unique_consumers:
+            # Chỉ lấy 4 trường cần thiết
+            row = {
+                'topicName': c.get('topicName', ''),
+                'consumerGroupId': c.get('consumerGroupId', ''),
+                'consumerClientId': c.get('consumerClientId', ''),
+                'consumerClientHost': c.get('consumerClientHost', ''),
+            }
+            writer.writerow(normalize_row(row, fieldnames))
 
-    logger.info(f"✅ Đã export {len(consumers)} consumer records ra file: {file_path}")
+    logger.info(f"✅ Đã export {len(unique_consumers)} consumer records (unique) ra file: {file_path}")
 
 
 def export_consumers_for_cluster(
@@ -363,17 +385,8 @@ def export_consumers_for_cluster(
                 empty_consumer_record = {
                     'topicName': topic_name,
                     'consumerGroupId': '',
-                    'consumerGroupState': '',
-                    'consumerGroupProtocol': '',
-                    'partition': '',
-                    'currentOffset': '',
-                    'endOffset': '',
-                    'lag': '',
-                    'memberCount': '',
-                    'simpleConsumerGroup': '',
-                    'coordinator': '',
-                    'members': '',
-                    'metadata': '',
+                    'consumerClientId': '',
+                    'consumerClientHost': '',
                 }
                 all_consumers.append(empty_consumer_record)
                 logger.debug(f"  Topic '{topic_name}': Không có consumer (tạo record rỗng)")
