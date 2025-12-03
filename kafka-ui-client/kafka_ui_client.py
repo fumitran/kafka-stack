@@ -92,19 +92,45 @@ class KafkaUIClient:
     
     def get_topics(self, cluster_name: Optional[str] = None) -> List[Dict]:
         """
-        Lấy danh sách tất cả topics
+        Lấy danh sách tất cả topics (tự động quét tất cả các pages nếu có pagination)
         
         Args:
             cluster_name: Tên cluster
         """
         cluster = cluster_name or self.cluster_name
+        all_topics = []
+        
+        # Lấy page đầu tiên để kiểm tra pagination
         response = self._make_request('GET', f'/api/clusters/{cluster}/topics')
-        # API trả về dict với key 'topics' chứa list
-        if isinstance(response, dict) and 'topics' in response:
-            return response['topics']
+        
+        # Kiểm tra xem response có pagination không
+        if isinstance(response, dict) and 'pageCount' in response:
+            page_count = response.get('pageCount', 1)
+            topics = response.get('topics', [])
+            all_topics.extend(topics)
+            
+            # Nếu có nhiều hơn 1 page, quét tất cả các pages còn lại
+            if page_count > 1:
+                for page in range(2, page_count + 1):
+                    try:
+                        page_response = self._make_request(
+                            'GET', 
+                            f'/api/clusters/{cluster}/topics',
+                            params={'page': page}
+                        )
+                        if isinstance(page_response, dict) and 'topics' in page_response:
+                            all_topics.extend(page_response.get('topics', []))
+                    except Exception as e:
+                        # Log warning nhưng tiếp tục với các pages khác
+                        print(f"Warning: Không thể lấy page {page}: {e}")
+                        continue
+            
+            return all_topics
+        
         # Nếu là list trực tiếp thì trả về luôn
         if isinstance(response, list):
             return response
+        
         return []
     
     def get_topic_details(

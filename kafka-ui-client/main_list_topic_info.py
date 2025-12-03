@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import traceback
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from kafka_ui_client import KafkaUIClient
@@ -69,12 +70,14 @@ def get_topic_message_count_from_data(topic_data: Dict[str, Any]) -> Optional[in
     
     Cách lấy:
     1. Response từ get_topics() đã có field 'partitions' - danh sách các partitions
-    2. Mỗi partition có 'offsetMax' - đây là high watermark (offset cuối cùng + 1)
-    3. Tổng số messages = tổng offsetMax của tất cả partitions
+    2. Mỗi partition có 'offsetMax' (high watermark) và 'offsetMin' (low watermark)
+    3. Số messages trong mỗi partition = offsetMax - offsetMin
+    4. Tổng số messages trong topic = tổng (offsetMax - offsetMin) của tất cả partitions
     
-    Lưu ý: 
-    - offsetMax trong Kafka là exclusive (0-based), nên offsetMax=100 nghĩa là có 100 messages (0-99)
-    - offsetMax - offsetMin = số messages hiện tại trong partition (nếu có log compaction)
+    Giải thích:
+    - offsetMax: offset cao nhất (high watermark) - offset của message cuối cùng + 1
+    - offsetMin: offset thấp nhất (low watermark) - offset của message đầu tiên còn tồn tại
+    - offsetMax - offsetMin = số lượng messages thực tế trong partition (sau khi trừ các message đã bị xóa/compact)
     
     Args:
         topic_data: Dict chứa thông tin topic từ get_topics() response
@@ -90,10 +93,16 @@ def get_topic_message_count_from_data(topic_data: Dict[str, Any]) -> Optional[in
         
         total_messages = 0
         for partition in partitions:
-            # offsetMax là high watermark - số lượng messages trong partition này
             offset_max = partition.get('offsetMax')
-            if offset_max is not None and isinstance(offset_max, (int, float)):
-                total_messages += int(offset_max)
+            offset_min = partition.get('offsetMin')
+            
+            # Kiểm tra cả offsetMax và offsetMin đều có giá trị hợp lệ
+            if (offset_max is not None and isinstance(offset_max, (int, float)) and
+                offset_min is not None and isinstance(offset_min, (int, float))):
+                # Số messages trong partition = offsetMax - offsetMin
+                partition_messages = int(offset_max) - int(offset_min)
+                if partition_messages > 0:
+                    total_messages += partition_messages
         
         return total_messages if total_messages > 0 else None
     except Exception as e:
@@ -108,9 +117,16 @@ def export_topics_to_csv(topics: List[Dict[str, Any]], file_path: str) -> None:
         logger.warning("Không có topic nào để export.")
         return
 
+    # Loại bỏ trường 'partitions' khỏi dữ liệu trước khi export
+    topics_clean = []
+    for t in topics:
+        topic_copy = t.copy()
+        topic_copy.pop('partitions', None)  # Bỏ trường partitions nếu có
+        topics_clean.append(topic_copy)
+
     # Lấy tập hợp tất cả key xuất hiện trong các topic (đảm bảo đủ cột)
     fieldnames_set = set()
-    for t in topics:
+    for t in topics_clean:
         fieldnames_set.update(t.keys())
 
     # Sắp xếp cột, ưu tiên một số cột hay dùng lên đầu
@@ -135,7 +151,7 @@ def export_topics_to_csv(topics: List[Dict[str, Any]], file_path: str) -> None:
     with open(file_path, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for t in topics:
+        for t in topics_clean:
             writer.writerow(normalize_row(t, fieldnames))
 
     logger.info(f"✅ Đã export {len(topics)} topics ra file: {file_path}")
@@ -178,7 +194,9 @@ def export_topics_for_cluster(
                     logger.warning(f"  [{i}/{len(topics)}] Topic '{topic_name}': Không thể tính số lượng messages")
         
         safe_cluster_name = sanitize_name_for_filename(cluster_name)
-        output_file = os.path.join(export_dir, f"topic_{safe_cluster_name}_info.csv")
+        # Thêm timestamp vào tên file: format YYYYMMDD_HHMMSS
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(export_dir, f"topic_{safe_cluster_name}_info_{timestamp}.csv")
         export_topics_to_csv(topics, output_file)
         
     except Exception as e:
