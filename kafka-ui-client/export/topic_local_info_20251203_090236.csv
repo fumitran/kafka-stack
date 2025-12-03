@@ -1,3 +1,0 @@
-name,totalMessages,internal,partitionCount,replicationFactor,replicas,inSyncReplicas,segmentSize,segmentCount,bytesInPerSec,bytesOutPerSec,underReplicatedPartitions,cleanUpPolicy
-fumitran,285,False,10,2,20,20,78894,20,,,0,DELETE
-test-topic,,False,1,1,1,1,0,1,,,0,DELETE

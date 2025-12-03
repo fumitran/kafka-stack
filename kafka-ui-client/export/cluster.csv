@@ -1,2 +1,0 @@
-name,status,brokerCount,topicCount,onlinePartitionCount,version,readOnly,bytesInPerSec,bytesOutPerSec,defaultCluster,features,lastError
-local,online,2,3,61,3.6-IV2,False,,,,"[""TOPIC_DELETION""]",

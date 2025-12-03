@@ -1,4 +1,0 @@
-topicName,consumerGroupId,consumerClientId,consumerClientHost
-fumitran,my-analytics-group,rdkafka-e4ab7c50-020b-4db9-bb8f-d3426b9fc481,/172.18.0.1
-fumitran,my-analytics-group,rdkafka-3a07e83b-1c11-4a91-a118-a207fcb1b395,/172.18.0.1
-test-topic,,,

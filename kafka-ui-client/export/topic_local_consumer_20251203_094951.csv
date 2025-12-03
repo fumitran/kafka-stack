@@ -1,3 +1,0 @@
-topicName,consumerGroupId,consumerGroupState,partition,currentOffset,endOffset,lag,memberCount,consumerGroupProtocol,simpleConsumerGroup,coordinator,members,metadata
-fumitran,,,,,,,,,,,,
-test-topic,,,,,,,,,,,,
