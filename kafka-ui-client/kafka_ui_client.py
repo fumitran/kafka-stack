@@ -296,6 +296,24 @@ class KafkaUIClient:
             f'/api/clusters/{cluster}/consumer-groups/{consumer_group_id}/offsets'
         )
     
+    def get_topic_consumer_groups(
+        self,
+        topic_name: str,
+        cluster_name: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Lấy danh sách consumer groups đang consume một topic cụ thể
+        
+        Args:
+            topic_name: Tên topic
+            cluster_name: Tên cluster
+        """
+        cluster = cluster_name or self.cluster_name
+        return self._make_request(
+            'GET',
+            f'/api/clusters/{cluster}/topics/{topic_name}/consumer-groups'
+        )
+    
     # ========== Schemas ==========
     
     def get_schemas(self, cluster_name: Optional[str] = None) -> List[Dict]:

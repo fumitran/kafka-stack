@@ -1,0 +1,3 @@
+topicName,consumerGroupId,consumerGroupState,partition,currentOffset,endOffset,lag,memberCount,consumerGroupProtocol,simpleConsumerGroup,coordinator,members,metadata,partitionAssignor,state
+fumitran,my-analytics-group,STABLE,,,,,0,,,"{""id"": 1, ""host"": ""kafka"", ""port"": 29092, ""bytesInPerSec"": null, ""bytesOutPerSec"": null, ""partitionsLeader"": null, ""partitions"": null, ""inSyncPartitions"": null, ""partitionsSkew"": null, ""leadersSkew"": null}",1,,range,STABLE
+test-topic,,,,,,,,,,,,,,
